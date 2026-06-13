@@ -18,30 +18,12 @@ class RECT(ctypes.Structure):
     ]
 
 
-def get_monitor_bounds():
-    monitors = []
-
-    def callback(_hMonitor, _hdcMonitor, lprcMonitor, _dwData):
-        rect = lprcMonitor.contents
-        monitors.append(
-            (
-                rect.left,
-                rect.top,
-                rect.right - rect.left,
-                rect.bottom - rect.top,
-            )
-        )
-        return True
-
-    enum_proc = ctypes.WINFUNCTYPE(
-        ctypes.c_bool,
-        ctypes.c_ulong,
-        ctypes.c_ulong,
-        ctypes.POINTER(RECT),
-        ctypes.c_double,
-    )(callback)
-    user32.EnumDisplayMonitors(None, None, enum_proc, 0)
-    return monitors
+def get_virtual_screen_bounds():
+    left = user32.GetSystemMetrics(76)
+    top = user32.GetSystemMetrics(77)
+    width = user32.GetSystemMetrics(78)
+    height = user32.GetSystemMetrics(79)
+    return left, top, width, height
 
 
 def close_overlay(_event=None):
@@ -51,25 +33,75 @@ def close_overlay(_event=None):
     overlay_windows = []
 
 
+def start_area_selection():
+    global overlay_windows
+    left, top, width, height = get_virtual_screen_bounds()
+
+    window = tk.Toplevel(root)
+    window.geometry(f"{width}x{height}+{left}+{top}")
+    window.attributes("-topmost", True)
+    window.attributes("-alpha", 0.3)
+    window.configure(bg="black")
+    window.overrideredirect(True)
+
+    canvas = tk.Canvas(window, highlightthickness=0, bg="black", cursor="cross")
+    canvas.pack(fill=tk.BOTH, expand=True)
+
+    state = {"start_x": None, "start_y": None, "rect": None}
+
+    def to_canvas_coords(x, y):
+        return x - left, y - top
+
+    def on_press(event):
+        state["start_x"] = event.x_root
+        state["start_y"] = event.y_root
+        if state["rect"] is not None:
+            canvas.delete(state["rect"])
+            state["rect"] = None
+
+    def on_drag(event):
+        if state["start_x"] is None:
+            return
+        if state["rect"] is not None:
+            canvas.delete(state["rect"])
+        cx1, cy1 = to_canvas_coords(state["start_x"], state["start_y"])
+        cx2, cy2 = to_canvas_coords(event.x_root, event.y_root)
+        state["rect"] = canvas.create_rectangle(
+            cx1, cy1, cx2, cy2, outline="red", width=2
+        )
+
+    def on_release(event):
+        if state["start_x"] is None:
+            return
+
+        x1, y1 = state["start_x"], state["start_y"]
+        x2, y2 = event.x_root, event.y_root
+        x = min(x1, x2)
+        y = min(y1, y2)
+        w = abs(x2 - x1)
+        h = abs(y2 - y1)
+
+        if w > 0 and h > 0:
+            print(f"x={x}, y={y}, width={w}, height={h}")
+
+        close_overlay()
+
+    window.bind("<Escape>", close_overlay)
+    canvas.bind("<ButtonPress-1>", on_press)
+    canvas.bind("<B1-Motion>", on_drag)
+    canvas.bind("<ButtonRelease-1>", on_release)
+
+    overlay_windows.append(window)
+
+
 def my_function():
-    def toggle_overlay():
-        global overlay_windows
+    def toggle_selection():
         if overlay_windows:
             close_overlay()
             return
+        start_area_selection()
 
-        for x, y, width, height in get_monitor_bounds():
-            window = tk.Toplevel(root)
-            window.geometry(f"{width}x{height}+{x}+{y}")
-            window.attributes("-topmost", True)
-            window.attributes("-alpha", 0.3)
-            window.configure(bg="black")
-            window.overrideredirect(True)
-            window.bind("<Escape>", close_overlay)
-            window.bind("<Button-1>", close_overlay)
-            overlay_windows.append(window)
-
-    root.after(0, toggle_overlay)
+    root.after(0, toggle_selection)
 
 
 keyboard.add_hotkey("alt+c", my_function)
