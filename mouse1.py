@@ -33,6 +33,17 @@ def close_overlay(_event=None):
     overlay_windows = []
 
 
+def lock_mouse_to_area(x, y, width, height):
+    rect = RECT(x, y, x + width, y + height)
+    user32.ClipCursor(ctypes.byref(rect))
+    print(f"Mouse locked to x={x}, y={y}, width={width}, height={height}")
+
+
+def unlock_mouse():
+    user32.ClipCursor(None)
+    print("Mouse unlocked.")
+
+
 def start_area_selection():
     global overlay_windows
     left, top, width, height = get_virtual_screen_bounds()
@@ -83,6 +94,7 @@ def start_area_selection():
 
         if w > 0 and h > 0:
             print(f"x={x}, y={y}, width={w}, height={h}")
+            lock_mouse_to_area(x, y, w, h)
 
         close_overlay()
 
@@ -103,10 +115,15 @@ def my_function():
 
     root.after(0, toggle_selection)
 
+def clear_selection():
+    unlock_mouse()
+
 
 keyboard.add_hotkey("alt+c", my_function)
+keyboard.add_hotkey("alt+x", clear_selection)
 
 try:
     root.mainloop()
 except KeyboardInterrupt:
+    unlock_mouse()
     print("Stopped.")
