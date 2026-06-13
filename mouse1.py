@@ -2,9 +2,18 @@ import ctypes
 import keyboard
 import tkinter as tk
 
+try:
+    ctypes.windll.shcore.SetProcessDpiAwareness(2)
+except Exception:
+    try:
+        ctypes.windll.user32.SetProcessDPIAware()
+    except Exception:
+        pass
+
 user32 = ctypes.windll.user32
 
 overlay_windows = []
+mouse_clip = {"rect": None, "job": None}
 root = tk.Tk()
 root.withdraw()
 
@@ -16,6 +25,10 @@ class RECT(ctypes.Structure):
         ("right", ctypes.c_long),
         ("bottom", ctypes.c_long),
     ]
+
+
+user32.ClipCursor.argtypes = [ctypes.POINTER(RECT)]
+user32.ClipCursor.restype = ctypes.c_bool
 
 
 def get_virtual_screen_bounds():
@@ -33,14 +46,50 @@ def close_overlay(_event=None):
     overlay_windows = []
 
 
-def lock_mouse_to_area(x, y, width, height):
+def apply_clip():
+    rect_data = mouse_clip["rect"]
+    if rect_data is None:
+        return False
+
+    x, y, width, height = rect_data
     rect = RECT(x, y, x + width, y + height)
-    user32.ClipCursor(ctypes.byref(rect))
+    ok = user32.ClipCursor(ctypes.byref(rect))
+    if not ok:
+        print(f"ClipCursor failed, error={ctypes.get_last_error()}")
+    return ok
+
+
+def release_clip():
+    user32.ClipCursor.argtypes = [ctypes.c_void_p]
+    user32.ClipCursor(None)
+    user32.ClipCursor.argtypes = [ctypes.POINTER(RECT)]
+
+
+def maintain_clip():
+    if mouse_clip["rect"] is None:
+        mouse_clip["job"] = None
+        return
+
+    apply_clip()
+    mouse_clip["job"] = root.after(100, maintain_clip)
+
+
+def lock_mouse_to_area(x, y, width, height):
+    mouse_clip["rect"] = (x, y, width, height)
+    apply_clip()
+
+    if mouse_clip["job"] is not None:
+        root.after_cancel(mouse_clip["job"])
+    maintain_clip()
     print(f"Mouse locked to x={x}, y={y}, width={width}, height={height}")
 
 
 def unlock_mouse():
-    user32.ClipCursor(None)
+    mouse_clip["rect"] = None
+    if mouse_clip["job"] is not None:
+        root.after_cancel(mouse_clip["job"])
+        mouse_clip["job"] = None
+    release_clip()
     print("Mouse unlocked.")
 
 
@@ -92,11 +141,15 @@ def start_area_selection():
         w = abs(x2 - x1)
         h = abs(y2 - y1)
 
+        close_overlay()
+
         if w > 0 and h > 0:
             print(f"x={x}, y={y}, width={w}, height={h}")
-            lock_mouse_to_area(x, y, w, h)
 
-        close_overlay()
+            def apply_lock():
+                lock_mouse_to_area(x, y, w, h)
+
+            root.after(50, apply_lock)
 
     window.bind("<Escape>", close_overlay)
     canvas.bind("<ButtonPress-1>", on_press)
@@ -115,8 +168,9 @@ def my_function():
 
     root.after(0, toggle_selection)
 
+
 def clear_selection():
-    unlock_mouse()
+    root.after(0, unlock_mouse)
 
 
 keyboard.add_hotkey("alt+c", my_function)
