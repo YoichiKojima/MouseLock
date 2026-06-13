@@ -11,9 +11,17 @@ except Exception:
         pass
 
 user32 = ctypes.windll.user32
+kernel32 = ctypes.windll.kernel32
+
+GWL_EXSTYLE = -20
+WS_EX_NOACTIVATE = 0x08000000
+WS_EX_TOOLWINDOW = 0x00000080
 
 overlay_windows = []
 mouse_clip = {"rect": None, "job": None}
+saved_lock_rect = {"rect": None}
+selection = {"foreground_hwnd": None, "screen_left": 0, "screen_top": 0}
+
 root = tk.Tk()
 root.withdraw()
 
@@ -39,11 +47,45 @@ def get_virtual_screen_bounds():
     return left, top, width, height
 
 
-def close_overlay(_event=None):
+def set_overlay_style(hwnd):
+    style = user32.GetWindowLongW(hwnd, GWL_EXSTYLE)
+    user32.SetWindowLongW(
+        hwnd,
+        GWL_EXSTYLE,
+        style | WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW,
+    )
+
+
+def restore_foreground(hwnd):
+    if not hwnd or not user32.IsWindow(hwnd):
+        return
+
+    if user32.IsIconic(hwnd):
+        user32.ShowWindow(hwnd, 9)
+
+    target_thread = user32.GetWindowThreadProcessId(hwnd, None)
+    current_thread = kernel32.GetCurrentThreadId()
+    attached = False
+    if target_thread != current_thread:
+        attached = bool(user32.AttachThreadInput(current_thread, target_thread, True))
+
+    user32.SetForegroundWindow(hwnd)
+    user32.BringWindowToTop(hwnd)
+
+    if attached:
+        user32.AttachThreadInput(current_thread, target_thread, False)
+
+
+def close_overlay(restore_focus=True):
     global overlay_windows
+    foreground = selection["foreground_hwnd"] if restore_focus else None
+
     for window in overlay_windows:
         window.destroy()
     overlay_windows = []
+
+    if foreground:
+        root.after(50, lambda: restore_foreground(foreground))
 
 
 def apply_clip():
@@ -75,7 +117,9 @@ def maintain_clip():
 
 
 def lock_mouse_to_area(x, y, width, height):
-    mouse_clip["rect"] = (x, y, width, height)
+    rect = (x, y, width, height)
+    mouse_clip["rect"] = rect
+    saved_lock_rect["rect"] = rect
     apply_clip()
 
     if mouse_clip["job"] is not None:
@@ -95,7 +139,15 @@ def unlock_mouse():
 
 def start_area_selection():
     global overlay_windows
+
+    if overlay_windows:
+        close_overlay(restore_focus=True)
+        return
+
+    selection["foreground_hwnd"] = user32.GetForegroundWindow()
     left, top, width, height = get_virtual_screen_bounds()
+    selection["screen_left"] = left
+    selection["screen_top"] = top
 
     window = tk.Toplevel(root)
     window.geometry(f"{width}x{height}+{left}+{top}")
@@ -103,6 +155,8 @@ def start_area_selection():
     window.attributes("-alpha", 0.3)
     window.configure(bg="black")
     window.overrideredirect(True)
+    window.update_idletasks()
+    set_overlay_style(window.winfo_id())
 
     canvas = tk.Canvas(window, highlightthickness=0, bg="black", cursor="cross")
     canvas.pack(fill=tk.BOTH, expand=True)
@@ -110,7 +164,7 @@ def start_area_selection():
     state = {"start_x": None, "start_y": None, "rect": None}
 
     def to_canvas_coords(x, y):
-        return x - left, y - top
+        return x - selection["screen_left"], y - selection["screen_top"]
 
     def on_press(event):
         state["start_x"] = event.x_root
@@ -140,18 +194,26 @@ def start_area_selection():
         y = min(y1, y2)
         w = abs(x2 - x1)
         h = abs(y2 - y1)
+        foreground = selection["foreground_hwnd"]
 
-        close_overlay()
+        close_overlay(restore_focus=False)
 
         if w > 0 and h > 0:
             print(f"x={x}, y={y}, width={w}, height={h}")
 
             def apply_lock():
                 lock_mouse_to_area(x, y, w, h)
+                if foreground:
+                    restore_foreground(foreground)
 
             root.after(50, apply_lock)
+        elif foreground:
+            root.after(50, lambda: restore_foreground(foreground))
 
-    window.bind("<Escape>", close_overlay)
+    def on_escape(_event=None):
+        close_overlay(restore_focus=True)
+
+    window.bind("<Escape>", on_escape)
     canvas.bind("<ButtonPress-1>", on_press)
     canvas.bind("<B1-Motion>", on_drag)
     canvas.bind("<ButtonRelease-1>", on_release)
@@ -160,24 +222,35 @@ def start_area_selection():
 
 
 def my_function():
-    def toggle_selection():
-        if overlay_windows:
-            close_overlay()
-            return
-        start_area_selection()
-
-    root.after(0, toggle_selection)
+    root.after(0, start_area_selection)
 
 
-def clear_selection():
-    root.after(0, unlock_mouse)
+def toggle_lock():
+    def do_toggle():
+        if mouse_clip["rect"] is not None:
+            unlock_mouse()
+            print("Mouse unlocked. Press Alt+X again to lock to the original area.")
+        elif saved_lock_rect["rect"] is not None:
+            x, y, width, height = saved_lock_rect["rect"]
+            lock_mouse_to_area(x, y, width, height)
+        else:
+            print("No lock area. Press Alt+C to select an area first.")
+
+    root.after(0, do_toggle)
+
+
+def cancel_selection():
+    if overlay_windows:
+        root.after(0, lambda: close_overlay(restore_focus=True))
 
 
 keyboard.add_hotkey("alt+c", my_function)
-keyboard.add_hotkey("alt+x", clear_selection)
+keyboard.add_hotkey("alt+x", toggle_lock)
+keyboard.add_hotkey("esc", cancel_selection)
 
 try:
     root.mainloop()
 except KeyboardInterrupt:
+    close_overlay(restore_focus=False)
     unlock_mouse()
     print("Stopped.")
