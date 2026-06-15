@@ -12,23 +12,37 @@ except Exception:
 
 user32 = ctypes.windll.user32
 kernel32 = ctypes.windll.kernel32
+gdi32 = ctypes.windll.gdi32
 
 GWL_EXSTYLE = -20
 GCLP_HCURSOR = -12
 WS_EX_NOACTIVATE = 0x08000000
 WS_EX_TOOLWINDOW = 0x00000080
-WS_EX_TRANSPARENT = 0x00000020
-BORDER_TRANSPARENT_COLOR = "#010101"
+WS_EX_LAYERED = 0x00080000
 HWND_TOPMOST = -1
 SWP_NOACTIVATE = 0x0010
 SWP_SHOWWINDOW = 0x0040
+ULW_ALPHA = 0x00000002
+BI_RGB = 0
+DIB_RGB_COLORS = 0
+AC_SRC_OVER = 0
+AC_SRC_ALPHA = 0x01
+DIM_ALPHA = 77
+BORDER_DASH_ON = 3
+BORDER_DASH_OFF = 1
 WH_MOUSE_LL = 14
 WM_LBUTTONDOWN = 0x0201
 WM_LBUTTONUP = 0x0202
 WM_MOUSEMOVE = 0x0200
 IDC_CROSS = 32515
 
-cross_cursor = user32.LoadCursorW(None, IDC_CROSS)
+WS_POPUP = 0x80000000
+WS_EX_TOPMOST = 0x00000008
+SW_SHOWNA = 8
+ERROR_CLASS_ALREADY_EXISTS = 1410
+OVERLAY_CLASS_NAME = "MoveMouseOverlay"
+overlay_wndproc_ref = None
+overlay_class_registered = False
 
 overlay_windows = []
 mouse_hook = {"handle": None, "proc": None}
@@ -43,11 +57,10 @@ selection = {
     "foreground_hwnd": None,
     "screen_left": 0,
     "screen_top": 0,
+    "screen_width": 0,
+    "screen_height": 0,
     "dragging": False,
-    "window": None,
-    "canvas": None,
-    "border_window": None,
-    "border_canvas": None,
+    "overlay_monitors": None,
     "state": None,
     "on_press": None,
     "on_drag": None,
@@ -71,6 +84,39 @@ class RECT(ctypes.Structure):
 
 class POINT(ctypes.Structure):
     _fields_ = [("x", ctypes.c_long), ("y", ctypes.c_long)]
+
+
+class SIZE(ctypes.Structure):
+    _fields_ = [("cx", ctypes.c_long), ("cy", ctypes.c_long)]
+
+
+class BLENDFUNCTION(ctypes.Structure):
+    _fields_ = [
+        ("BlendOp", ctypes.c_byte),
+        ("BlendFlags", ctypes.c_byte),
+        ("SourceConstantAlpha", ctypes.c_byte),
+        ("AlphaFormat", ctypes.c_byte),
+    ]
+
+
+class BITMAPINFOHEADER(ctypes.Structure):
+    _fields_ = [
+        ("biSize", ctypes.c_uint32),
+        ("biWidth", ctypes.c_long),
+        ("biHeight", ctypes.c_long),
+        ("biPlanes", ctypes.c_uint16),
+        ("biBitCount", ctypes.c_uint16),
+        ("biCompression", ctypes.c_uint32),
+        ("biSizeImage", ctypes.c_uint32),
+        ("biXPelsPerMeter", ctypes.c_long),
+        ("biYPelsPerMeter", ctypes.c_long),
+        ("biClrUsed", ctypes.c_uint32),
+        ("biClrImportant", ctypes.c_uint32),
+    ]
+
+
+class BITMAPINFO(ctypes.Structure):
+    _fields_ = [("bmiHeader", BITMAPINFOHEADER)]
 
 
 class MONITORINFO(ctypes.Structure):
@@ -124,6 +170,97 @@ user32.CallNextHookEx.argtypes = [
 user32.CallNextHookEx.restype = LRESULT
 user32.UnhookWindowsHookEx.argtypes = [ctypes.c_void_p]
 user32.UnhookWindowsHookEx.restype = ctypes.c_bool
+user32.UpdateLayeredWindow.argtypes = [
+    ctypes.c_void_p,
+    ctypes.c_void_p,
+    ctypes.POINTER(POINT),
+    ctypes.POINTER(SIZE),
+    ctypes.c_void_p,
+    ctypes.POINTER(POINT),
+    ctypes.c_uint32,
+    ctypes.POINTER(BLENDFUNCTION),
+    ctypes.c_uint32,
+]
+user32.UpdateLayeredWindow.restype = ctypes.c_bool
+gdi32.CreateCompatibleDC.argtypes = [ctypes.c_void_p]
+gdi32.CreateCompatibleDC.restype = ctypes.c_void_p
+gdi32.CreateDIBSection.argtypes = [
+    ctypes.c_void_p,
+    ctypes.POINTER(BITMAPINFO),
+    ctypes.c_uint,
+    ctypes.POINTER(ctypes.c_void_p),
+    ctypes.c_void_p,
+    ctypes.c_uint,
+]
+gdi32.CreateDIBSection.restype = ctypes.c_void_p
+gdi32.SelectObject.argtypes = [ctypes.c_void_p, ctypes.c_void_p]
+gdi32.SelectObject.restype = ctypes.c_void_p
+gdi32.DeleteObject.argtypes = [ctypes.c_void_p]
+gdi32.DeleteObject.restype = ctypes.c_bool
+gdi32.DeleteDC.argtypes = [ctypes.c_void_p]
+gdi32.DeleteDC.restype = ctypes.c_bool
+user32.EnumDisplayMonitors.argtypes = [
+    ctypes.c_void_p,
+    ctypes.c_void_p,
+    ctypes.c_void_p,
+    ctypes.c_longlong if ctypes.sizeof(ctypes.c_void_p) == 8 else ctypes.c_long,
+]
+user32.EnumDisplayMonitors.restype = ctypes.c_bool
+user32.GetMonitorInfoW.argtypes = [ctypes.c_void_p, ctypes.POINTER(MONITORINFO)]
+user32.GetMonitorInfoW.restype = ctypes.c_bool
+user32.DefWindowProcW.argtypes = [
+    ctypes.c_void_p,
+    ctypes.c_uint,
+    ctypes.c_void_p,
+    ctypes.c_void_p,
+]
+user32.DefWindowProcW.restype = LRESULT
+user32.CreateWindowExW.argtypes = [
+    ctypes.c_ulong,
+    ctypes.c_wchar_p,
+    ctypes.c_wchar_p,
+    ctypes.c_ulong,
+    ctypes.c_int,
+    ctypes.c_int,
+    ctypes.c_int,
+    ctypes.c_int,
+    ctypes.c_void_p,
+    ctypes.c_void_p,
+    ctypes.c_void_p,
+    ctypes.c_void_p,
+]
+user32.CreateWindowExW.restype = ctypes.c_void_p
+user32.DestroyWindow.argtypes = [ctypes.c_void_p]
+user32.DestroyWindow.restype = ctypes.c_bool
+user32.ShowWindow.argtypes = [ctypes.c_void_p, ctypes.c_int]
+user32.ShowWindow.restype = ctypes.c_bool
+kernel32.GetModuleHandleW.argtypes = [ctypes.c_wchar_p]
+kernel32.GetModuleHandleW.restype = ctypes.c_void_p
+
+
+WNDPROC = ctypes.WINFUNCTYPE(LRESULT, ctypes.c_void_p, ctypes.c_uint, ctypes.c_void_p, ctypes.c_void_p)
+
+
+class WNDCLASSW(ctypes.Structure):
+    _fields_ = [
+        ("style", ctypes.c_uint),
+        ("lpfnWndProc", WNDPROC),
+        ("cbClsExtra", ctypes.c_int),
+        ("cbWndExtra", ctypes.c_int),
+        ("hInstance", ctypes.c_void_p),
+        ("hIcon", ctypes.c_void_p),
+        ("hCursor", ctypes.c_void_p),
+        ("hbrBackground", ctypes.c_void_p),
+        ("lpszMenuName", ctypes.c_wchar_p),
+        ("lpszClassName", ctypes.c_wchar_p),
+    ]
+
+
+user32.RegisterClassW.argtypes = [ctypes.POINTER(WNDCLASSW)]
+user32.RegisterClassW.restype = ctypes.c_uint16
+
+
+cross_cursor = user32.LoadCursorW(None, IDC_CROSS)
 
 
 def get_virtual_screen_bounds():
@@ -132,6 +269,38 @@ def get_virtual_screen_bounds():
     width = user32.GetSystemMetrics(78)
     height = user32.GetSystemMetrics(79)
     return left, top, width, height
+
+
+def enum_monitors():
+    monitors = []
+
+    @ctypes.WINFUNCTYPE(
+        ctypes.c_int,
+        ctypes.c_ulong,
+        ctypes.c_ulong,
+        ctypes.POINTER(RECT),
+        ctypes.c_longlong if ctypes.sizeof(ctypes.c_void_p) == 8 else ctypes.c_long,
+    )
+    def callback(hmon, _hdc, _lprect, _data):
+        info = MONITORINFO()
+        info.cbSize = ctypes.sizeof(MONITORINFO)
+        if not user32.GetMonitorInfoW(hmon, ctypes.byref(info)):
+            return 1
+        rect = info.rcMonitor
+        monitors.append(
+            (
+                rect.left,
+                rect.top,
+                rect.right - rect.left,
+                rect.bottom - rect.top,
+            )
+        )
+        return 1
+
+    user32.EnumDisplayMonitors(None, None, callback, 0)
+    if monitors:
+        return monitors
+    return [get_virtual_screen_bounds()]
 
 
 def get_monitor_bounds_at(x, y):
@@ -300,15 +469,163 @@ def restore_foreground(hwnd):
         user32.AttachThreadInput(current_thread, target_thread, False)
 
 
+def bind_cross_cursor(widget):
+    def keep_cross_cursor(_event=None):
+        user32.SetCursor(cross_cursor)
+
+    widget.bind("<Enter>", keep_cross_cursor, add="+")
+    widget.bind("<Motion>", keep_cross_cursor, add="+")
+
+
+def dash_visible(pos):
+    period = BORDER_DASH_ON + BORDER_DASH_OFF
+    return (pos // period) % 2 == 0
+
+
+def build_overlay_bitmap(width, height, cutout=None):
+    pixel = bytes([0, 0, 0, DIM_ALPHA])
+    buf = bytearray(pixel * (width * height))
+
+    if cutout is None:
+        return buf
+
+    x1, y1, x2, y2 = cutout
+    left = max(0, min(x1, x2))
+    top = max(0, min(y1, y2))
+    right = min(width, max(x1, x2))
+    bottom = min(height, max(y1, y2))
+    if right <= left or bottom <= top:
+        return buf
+
+    clear_row = bytes([0, 0, 0, 0]) * (right - left)
+    row_bytes = width * 4
+    for y in range(top, bottom):
+        offset = y * row_bytes + left * 4
+        buf[offset : offset + len(clear_row)] = clear_row
+
+    white = bytes([255, 255, 255, 255])
+    for x in range(left, right):
+        if dash_visible(x - left):
+            idx = (top * width + x) * 4
+            buf[idx : idx + 4] = white
+            if bottom - 1 > top:
+                idx = ((bottom - 1) * width + x) * 4
+                buf[idx : idx + 4] = white
+    for y in range(top, bottom):
+        if dash_visible(y - top):
+            idx = (y * width + left) * 4
+            buf[idx : idx + 4] = white
+            if right - 1 > left:
+                idx = (y * width + (right - 1)) * 4
+                buf[idx : idx + 4] = white
+
+    return buf
+
+
+def monitor_cutout(overlay, cutout):
+    if cutout is None:
+        return None
+
+    screen_left = selection["screen_left"]
+    screen_top = selection["screen_top"]
+    cx1, cy1, cx2, cy2 = cutout
+    gx1 = cx1 + screen_left
+    gy1 = cy1 + screen_top
+    gx2 = cx2 + screen_left
+    gy2 = cy2 + screen_top
+
+    mon_left = overlay["left"]
+    mon_top = overlay["top"]
+    mon_right = mon_left + overlay["width"]
+    mon_bottom = mon_top + overlay["height"]
+
+    left = max(min(gx1, gx2), mon_left)
+    top = max(min(gy1, gy2), mon_top)
+    right = min(max(gx1, gx2), mon_right)
+    bottom = min(max(gy1, gy2), mon_bottom)
+    if right <= left or bottom <= top:
+        return None
+
+    return (left - mon_left, top - mon_top, right - mon_left, bottom - mon_top)
+
+
+def place_overlay_window(hwnd, left, top, width, height):
+    user32.SetWindowPos(
+        hwnd,
+        HWND_TOPMOST,
+        int(left),
+        int(top),
+        int(width),
+        int(height),
+        SWP_NOACTIVATE | SWP_SHOWWINDOW,
+    )
+
+
+def update_one_layered_overlay(overlay, cutout=None):
+    hwnd = overlay["hwnd"]
+    width = overlay["width"]
+    height = overlay["height"]
+    buf = build_overlay_bitmap(width, height, cutout)
+
+    hdc_screen = user32.GetDC(None)
+    hdc_mem = gdi32.CreateCompatibleDC(hdc_screen)
+
+    bmi = BITMAPINFO()
+    bmi.bmiHeader.biSize = ctypes.sizeof(BITMAPINFOHEADER)
+    bmi.bmiHeader.biWidth = width
+    bmi.bmiHeader.biHeight = -height
+    bmi.bmiHeader.biPlanes = 1
+    bmi.bmiHeader.biBitCount = 32
+    bmi.bmiHeader.biCompression = BI_RGB
+
+    bits = ctypes.c_void_p()
+    hbmp = gdi32.CreateDIBSection(
+        hdc_mem,
+        ctypes.byref(bmi),
+        DIB_RGB_COLORS,
+        ctypes.byref(bits),
+        None,
+        0,
+    )
+    if not hbmp or not bits.value:
+        gdi32.DeleteDC(hdc_mem)
+        user32.ReleaseDC(None, hdc_screen)
+        return
+
+    src = (ctypes.c_char * len(buf)).from_buffer(buf)
+    ctypes.memmove(bits.value, src, len(buf))
+
+    old_obj = gdi32.SelectObject(hdc_mem, hbmp)
+    blend = BLENDFUNCTION(AC_SRC_OVER, 0, 255, AC_SRC_ALPHA)
+    user32.UpdateLayeredWindow(
+        hwnd,
+        hdc_screen,
+        ctypes.byref(POINT(overlay["left"], overlay["top"])),
+        ctypes.byref(SIZE(width, height)),
+        hdc_mem,
+        ctypes.byref(POINT(0, 0)),
+        0,
+        ctypes.byref(blend),
+        ULW_ALPHA,
+    )
+
+    gdi32.SelectObject(hdc_mem, old_obj)
+    gdi32.DeleteObject(hbmp)
+    gdi32.DeleteDC(hdc_mem)
+    user32.ReleaseDC(None, hdc_screen)
+
+
+def update_layered_overlay(cutout=None):
+    for overlay in selection.get("overlay_monitors") or []:
+        local_cutout = monitor_cutout(overlay, cutout)
+        update_one_layered_overlay(overlay, local_cutout)
+
+
 def destroy_selection_overlay():
     global overlay_windows
-    for window in (selection["window"], selection["border_window"]):
-        if window is not None:
-            window.destroy()
-    selection["window"] = None
-    selection["canvas"] = None
-    selection["border_window"] = None
-    selection["border_canvas"] = None
+    for overlay in selection.get("overlay_monitors") or []:
+        user32.DestroyWindow(overlay["hwnd"])
+    selection["overlay_monitors"] = None
     overlay_windows = []
 
 
@@ -401,61 +718,86 @@ def end_selection_session(restore_original=False):
         root.after(50, restore_saved_lock)
 
 
+def ensure_overlay_window_class():
+    global overlay_wndproc_ref, overlay_class_registered
+    if overlay_class_registered:
+        return True
+
+    @WNDPROC
+    def overlay_wndproc(hwnd, msg, wparam, lparam):
+        return user32.DefWindowProcW(hwnd, msg, wparam, lparam)
+
+    overlay_wndproc_ref = overlay_wndproc
+    wc = WNDCLASSW()
+    wc.lpfnWndProc = overlay_wndproc_ref
+    wc.hInstance = kernel32.GetModuleHandleW(None)
+    wc.hCursor = cross_cursor
+    wc.lpszClassName = OVERLAY_CLASS_NAME
+
+    atom = user32.RegisterClassW(ctypes.byref(wc))
+    if not atom and ctypes.get_last_error() != ERROR_CLASS_ALREADY_EXISTS:
+        print(f"RegisterClassW failed, error={ctypes.get_last_error()}")
+        return False
+
+    overlay_class_registered = True
+    return True
+
+
+def create_monitor_overlay(mon_left, mon_top, mon_width, mon_height):
+    if not ensure_overlay_window_class():
+        return None
+
+    hwnd = user32.CreateWindowExW(
+        WS_EX_LAYERED | WS_EX_TOPMOST | WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW,
+        OVERLAY_CLASS_NAME,
+        None,
+        WS_POPUP,
+        int(mon_left),
+        int(mon_top),
+        int(mon_width),
+        int(mon_height),
+        None,
+        None,
+        kernel32.GetModuleHandleW(None),
+        None,
+    )
+    if not hwnd:
+        print(f"CreateWindowExW failed, error={ctypes.get_last_error()}")
+        return None
+
+    user32.ShowWindow(hwnd, SW_SHOWNA)
+    place_overlay_window(hwnd, mon_left, mon_top, mon_width, mon_height)
+
+    return {
+        "hwnd": hwnd,
+        "left": mon_left,
+        "top": mon_top,
+        "width": mon_width,
+        "height": mon_height,
+    }
+
+
 def create_selection_overlay(left, top, width, height):
+    global overlay_windows
+
     selection["screen_left"] = left
     selection["screen_top"] = top
+    selection["screen_width"] = width
+    selection["screen_height"] = height
 
-    window = tk.Toplevel(root)
-    window.withdraw()
-    window.geometry(f"{width}x{height}+{left}+{top}")
-    window.attributes("-alpha", 0.3)
-    window.configure(bg="black", cursor="crosshair")
-    window.overrideredirect(True)
+    overlays = []
+    for mon_left, mon_top, mon_width, mon_height in enum_monitors():
+        overlay = create_monitor_overlay(mon_left, mon_top, mon_width, mon_height)
+        if overlay is not None:
+            overlays.append(overlay)
 
-    canvas = tk.Canvas(window, highlightthickness=0, bg="black", cursor="crosshair")
-    canvas.pack(fill=tk.BOTH, expand=True)
+    selection["overlay_monitors"] = overlays
 
-    def keep_cross_cursor(_event=None):
-        user32.SetCursor(cross_cursor)
+    for overlay in overlays:
+        update_one_layered_overlay(overlay)
 
-    for widget in (window, canvas):
-        widget.bind("<Enter>", keep_cross_cursor, add="+")
-        widget.bind("<Motion>", keep_cross_cursor, add="+")
-
-    window.update_idletasks()
-    show_overlay_without_focus(window, left, top, width, height)
-
-    border_window = tk.Toplevel(root)
-    border_window.withdraw()
-    border_window.geometry(f"{width}x{height}+{left}+{top}")
-    border_window.overrideredirect(True)
-    border_window.attributes("-topmost", True)
-    border_window.attributes("-transparentcolor", BORDER_TRANSPARENT_COLOR)
-    border_window.configure(bg=BORDER_TRANSPARENT_COLOR)
-
-    border_canvas = tk.Canvas(
-        border_window,
-        highlightthickness=0,
-        bg=BORDER_TRANSPARENT_COLOR,
-    )
-    border_canvas.pack(fill=tk.BOTH, expand=True)
-
-    border_window.update_idletasks()
-    show_overlay_without_focus(border_window, left, top, width, height)
-    border_hwnd = border_window.winfo_id()
-    border_style = user32.GetWindowLongW(border_hwnd, GWL_EXSTYLE)
-    user32.SetWindowLongW(
-        border_hwnd,
-        GWL_EXSTYLE,
-        border_style | WS_EX_TRANSPARENT | WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW,
-    )
-
-    selection["window"] = window
-    selection["canvas"] = canvas
-    selection["border_window"] = border_window
-    selection["border_canvas"] = border_canvas
-    overlay_windows.extend([window, border_window])
-    return canvas
+    overlay_windows = [overlay["hwnd"] for overlay in overlays]
+    return overlays
 
 
 def start_area_selection():
@@ -475,35 +817,24 @@ def start_area_selection():
     selection["active"] = True
     selection["dragging"] = False
 
-    state = {"start_x": None, "start_y": None, "rect": None}
+    state = {"start_x": None, "start_y": None}
     selection["state"] = state
 
     def to_canvas_coords(x, y):
         return x - selection["screen_left"], y - selection["screen_top"]
 
     def on_press(x, y):
-        border_canvas = selection["border_canvas"]
         state["start_x"] = x
         state["start_y"] = y
         selection["dragging"] = True
-        if state["rect"] is not None:
-            border_canvas.delete(state["rect"])
-            state["rect"] = None
+        update_layered_overlay()
 
     def on_drag(x, y):
-        border_canvas = selection["border_canvas"]
         if state["start_x"] is None:
             return
-        if state["rect"] is not None:
-            border_canvas.delete(state["rect"])
         cx1, cy1 = to_canvas_coords(state["start_x"], state["start_y"])
         cx2, cy2 = to_canvas_coords(x, y)
-        dash = (4, 2)
-
-        state["rect"] = border_canvas.create_rectangle(
-            cx1, cy1, cx2, cy2, outline="white", width=1, dash=dash
-        )
-        border_canvas.update_idletasks()
+        update_layered_overlay((cx1, cy1, cx2, cy2))
 
     def on_release(x, y):
         if state["start_x"] is None:
