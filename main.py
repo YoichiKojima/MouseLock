@@ -27,7 +27,9 @@ BI_RGB = 0
 DIB_RGB_COLORS = 0
 AC_SRC_OVER = 0
 AC_SRC_ALPHA = 0x01
-DIM_ALPHA = 77
+DIM_ALPHA = 128
+FADE_DURATION_MS = 100
+FADE_INTERVAL_MS = 16
 BORDER_DASH_ON = 3
 BORDER_DASH_OFF = 1
 WH_MOUSE_LL = 14
@@ -61,6 +63,9 @@ selection = {
     "screen_height": 0,
     "dragging": False,
     "overlay_monitors": None,
+    "fade_job": None,
+    "fade_alpha": 0,
+    "last_cutout": None,
     "state": None,
     "on_press": None,
     "on_drag": None,
@@ -482,8 +487,9 @@ def dash_visible(pos):
     return (pos // period) % 2 == 0
 
 
-def build_overlay_bitmap(width, height, cutout=None):
-    pixel = bytes([0, 0, 0, DIM_ALPHA])
+def build_overlay_bitmap(width, height, cutout=None, fade_alpha=255):
+    dim_alpha = (DIM_ALPHA * max(0, min(255, int(fade_alpha)))) // 255
+    pixel = bytes([0, 0, 0, dim_alpha])
     buf = bytearray(pixel * (width * height))
 
     if cutout is None:
@@ -503,7 +509,8 @@ def build_overlay_bitmap(width, height, cutout=None):
         offset = y * row_bytes + left * 4
         buf[offset : offset + len(clear_row)] = clear_row
 
-    white = bytes([255, 255, 255, 255])
+    border_alpha = max(0, min(255, int(fade_alpha)))
+    white = bytes([255, 255, 255, border_alpha])
     for x in range(left, right):
         if dash_visible(x - left):
             idx = (top * width + x) * 4
@@ -561,11 +568,13 @@ def place_overlay_window(hwnd, left, top, width, height):
     )
 
 
-def update_one_layered_overlay(overlay, cutout=None):
+def update_one_layered_overlay(overlay, cutout=None, fade_alpha=None):
     hwnd = overlay["hwnd"]
     width = overlay["width"]
     height = overlay["height"]
-    buf = build_overlay_bitmap(width, height, cutout)
+    if fade_alpha is None:
+        fade_alpha = selection.get("fade_alpha", 255)
+    buf = build_overlay_bitmap(width, height, cutout, fade_alpha)
 
     hdc_screen = user32.GetDC(None)
     hdc_mem = gdi32.CreateCompatibleDC(hdc_screen)
@@ -615,21 +624,89 @@ def update_one_layered_overlay(overlay, cutout=None):
     user32.ReleaseDC(None, hdc_screen)
 
 
-def update_layered_overlay(cutout=None):
+def update_layered_overlay(cutout=None, fade_alpha=None):
+    if cutout is not None:
+        selection["last_cutout"] = cutout
+    elif not selection.get("dragging"):
+        selection["last_cutout"] = None
+
+    effective_cutout = cutout
+    if effective_cutout is None and selection.get("dragging"):
+        effective_cutout = selection.get("last_cutout")
+
+    if fade_alpha is None:
+        fade_alpha = selection.get("fade_alpha", 255)
+
     for overlay in selection.get("overlay_monitors") or []:
-        local_cutout = monitor_cutout(overlay, cutout)
-        update_one_layered_overlay(overlay, local_cutout)
+        local_cutout = monitor_cutout(overlay, effective_cutout)
+        update_one_layered_overlay(overlay, local_cutout, fade_alpha)
+
+
+def cancel_overlay_fade():
+    job = selection.get("fade_job")
+    if job is not None:
+        root.after_cancel(job)
+    selection["fade_job"] = None
+
+
+def run_overlay_fade(target_alpha, on_complete=None):
+    cancel_overlay_fade()
+    if not selection.get("overlay_monitors"):
+        if on_complete:
+            on_complete()
+        return
+
+    start_alpha = selection.get("fade_alpha", 0)
+    steps = max(1, FADE_DURATION_MS // FADE_INTERVAL_MS)
+
+    def tick(step=0):
+        if not selection.get("overlay_monitors"):
+            selection["fade_job"] = None
+            if on_complete:
+                on_complete()
+            return
+
+        if step >= steps:
+            selection["fade_alpha"] = target_alpha
+            update_layered_overlay(fade_alpha=target_alpha)
+            selection["fade_job"] = None
+            if on_complete:
+                on_complete()
+            return
+
+        alpha = int(start_alpha + (target_alpha - start_alpha) * (step + 1) / steps)
+        selection["fade_alpha"] = alpha
+        update_layered_overlay(fade_alpha=alpha)
+        selection["fade_job"] = root.after(
+            FADE_INTERVAL_MS, lambda s=step + 1: tick(s)
+        )
+
+    tick()
+
+
+def fade_in_overlay():
+    selection["fade_alpha"] = 0
+    selection["last_cutout"] = None
+    update_layered_overlay(fade_alpha=0)
+    run_overlay_fade(255)
+
+
+def fade_out_overlay(on_complete):
+    run_overlay_fade(0, on_complete=on_complete)
 
 
 def destroy_selection_overlay():
     global overlay_windows
+    cancel_overlay_fade()
     for overlay in selection.get("overlay_monitors") or []:
         user32.DestroyWindow(overlay["hwnd"])
     selection["overlay_monitors"] = None
+    selection["fade_alpha"] = 0
+    selection["last_cutout"] = None
     overlay_windows = []
 
 
-def end_selection_mode(restore_focus=True):
+def end_selection_mode(restore_focus=True, animate=True):
     foreground = selection["foreground_hwnd"] if restore_focus else None
 
     hook_active.value = 0
@@ -642,6 +719,16 @@ def end_selection_mode(restore_focus=True):
     selection["on_release"] = None
     stop_mouse_pump()
     uninstall_mouse_hook()
+
+    if animate and selection.get("overlay_monitors"):
+        def finish():
+            destroy_selection_overlay()
+            if foreground:
+                root.after(50, lambda: restore_foreground(foreground))
+
+        fade_out_overlay(finish)
+        return
+
     destroy_selection_overlay()
 
     if foreground:
@@ -649,7 +736,7 @@ def end_selection_mode(restore_focus=True):
 
 
 def close_overlay(restore_focus=True):
-    end_selection_mode(restore_focus=restore_focus)
+    end_selection_mode(restore_focus=restore_focus, animate=False)
 
 
 def apply_clip():
@@ -792,11 +879,14 @@ def create_selection_overlay(left, top, width, height):
             overlays.append(overlay)
 
     selection["overlay_monitors"] = overlays
+    selection["fade_alpha"] = 0
+    selection["last_cutout"] = None
 
     for overlay in overlays:
-        update_one_layered_overlay(overlay)
+        update_one_layered_overlay(overlay, fade_alpha=0)
 
     overlay_windows = [overlay["hwnd"] for overlay in overlays]
+    fade_in_overlay()
     return overlays
 
 
@@ -806,6 +896,9 @@ def start_area_selection():
     if selection["active"]:
         end_selection_session(restore_original=True)
         return
+
+    cancel_overlay_fade()
+    destroy_selection_overlay()
 
     selection_session["restore_on_cancel"] = saved_lock_rect["rect"] is not None
 
@@ -827,6 +920,7 @@ def start_area_selection():
         state["start_x"] = x
         state["start_y"] = y
         selection["dragging"] = True
+        selection["last_cutout"] = None
         update_layered_overlay()
 
     def on_drag(x, y):
