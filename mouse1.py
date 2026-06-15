@@ -22,6 +22,7 @@ mouse_clip = {"rect": None, "job": None}
 saved_lock_rect = {"rect": None}
 selection_session = {"restore_on_cancel": False}
 selection = {"foreground_hwnd": None, "screen_left": 0, "screen_top": 0}
+session_state = {"locked": False}
 
 root = tk.Tk()
 root.withdraw()
@@ -69,6 +70,28 @@ def get_monitor_bounds_at(x, y):
     user32.GetMonitorInfoW(monitor, ctypes.byref(info))
     rect = info.rcMonitor
     return rect.left, rect.top, rect.right - rect.left, rect.bottom - rect.top
+
+
+def is_workstation_locked():
+    desktop = user32.OpenInputDesktop(0, False, 0)
+    if desktop:
+        user32.CloseDesktop(desktop)
+        return False
+    return True
+
+
+def on_session_unlock():
+    keyboard.stash_state()
+    if mouse_clip["rect"] is not None:
+        apply_clip()
+
+
+def poll_session_state():
+    locked = is_workstation_locked()
+    if session_state["locked"] and not locked:
+        on_session_unlock()
+    session_state["locked"] = locked
+    root.after(500, poll_session_state)
 
 
 def set_overlay_style(hwnd):
@@ -296,6 +319,9 @@ def cancel_selection():
 keyboard.add_hotkey("alt+c", my_function)
 keyboard.add_hotkey("alt+x", toggle_lock)
 keyboard.add_hotkey("esc", cancel_selection)
+
+session_state["locked"] = is_workstation_locked()
+root.after(500, poll_session_state)
 
 try:
     root.mainloop()
