@@ -17,6 +17,8 @@ GWL_EXSTYLE = -20
 GCLP_HCURSOR = -12
 WS_EX_NOACTIVATE = 0x08000000
 WS_EX_TOOLWINDOW = 0x00000080
+WS_EX_TRANSPARENT = 0x00000020
+BORDER_TRANSPARENT_COLOR = "#010101"
 HWND_TOPMOST = -1
 SWP_NOACTIVATE = 0x0010
 SWP_SHOWWINDOW = 0x0040
@@ -44,6 +46,8 @@ selection = {
     "dragging": False,
     "window": None,
     "canvas": None,
+    "border_window": None,
+    "border_canvas": None,
     "state": None,
     "on_press": None,
     "on_drag": None,
@@ -298,11 +302,13 @@ def restore_foreground(hwnd):
 
 def destroy_selection_overlay():
     global overlay_windows
-    window = selection["window"]
-    if window is not None:
-        window.destroy()
+    for window in (selection["window"], selection["border_window"]):
+        if window is not None:
+            window.destroy()
     selection["window"] = None
     selection["canvas"] = None
+    selection["border_window"] = None
+    selection["border_canvas"] = None
     overlay_windows = []
 
 
@@ -419,9 +425,36 @@ def create_selection_overlay(left, top, width, height):
     window.update_idletasks()
     show_overlay_without_focus(window, left, top, width, height)
 
+    border_window = tk.Toplevel(root)
+    border_window.withdraw()
+    border_window.geometry(f"{width}x{height}+{left}+{top}")
+    border_window.overrideredirect(True)
+    border_window.attributes("-topmost", True)
+    border_window.attributes("-transparentcolor", BORDER_TRANSPARENT_COLOR)
+    border_window.configure(bg=BORDER_TRANSPARENT_COLOR)
+
+    border_canvas = tk.Canvas(
+        border_window,
+        highlightthickness=0,
+        bg=BORDER_TRANSPARENT_COLOR,
+    )
+    border_canvas.pack(fill=tk.BOTH, expand=True)
+
+    border_window.update_idletasks()
+    show_overlay_without_focus(border_window, left, top, width, height)
+    border_hwnd = border_window.winfo_id()
+    border_style = user32.GetWindowLongW(border_hwnd, GWL_EXSTYLE)
+    user32.SetWindowLongW(
+        border_hwnd,
+        GWL_EXSTYLE,
+        border_style | WS_EX_TRANSPARENT | WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW,
+    )
+
     selection["window"] = window
     selection["canvas"] = canvas
-    overlay_windows.append(window)
+    selection["border_window"] = border_window
+    selection["border_canvas"] = border_canvas
+    overlay_windows.extend([window, border_window])
     return canvas
 
 
@@ -449,28 +482,28 @@ def start_area_selection():
         return x - selection["screen_left"], y - selection["screen_top"]
 
     def on_press(x, y):
-        canvas = selection["canvas"]
+        border_canvas = selection["border_canvas"]
         state["start_x"] = x
         state["start_y"] = y
         selection["dragging"] = True
         if state["rect"] is not None:
-            canvas.delete(state["rect"])
+            border_canvas.delete(state["rect"])
             state["rect"] = None
 
     def on_drag(x, y):
-        canvas = selection["canvas"]
+        border_canvas = selection["border_canvas"]
         if state["start_x"] is None:
             return
         if state["rect"] is not None:
-            canvas.delete(state["rect"])
+            border_canvas.delete(state["rect"])
         cx1, cy1 = to_canvas_coords(state["start_x"], state["start_y"])
         cx2, cy2 = to_canvas_coords(x, y)
-        dash = (3, 2)
+        dash = (4, 2)
 
-        state["rect"] = canvas.create_rectangle(
+        state["rect"] = border_canvas.create_rectangle(
             cx1, cy1, cx2, cy2, outline="white", width=1, dash=dash
         )
-        canvas.update_idletasks()
+        border_canvas.update_idletasks()
 
     def on_release(x, y):
         if state["start_x"] is None:
