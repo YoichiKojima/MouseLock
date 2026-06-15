@@ -274,6 +274,8 @@ def my_function():
 
 def toggle_lock():
     def do_toggle():
+        if overlay_windows:
+            return
         if mouse_clip["rect"] is not None:
             unlock_mouse()
             print("Mouse unlocked. Press Alt+X again to lock to the original area.")
