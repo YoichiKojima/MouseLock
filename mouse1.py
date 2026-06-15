@@ -20,6 +20,7 @@ WS_EX_TOOLWINDOW = 0x00000080
 overlay_windows = []
 mouse_clip = {"rect": None, "job": None}
 saved_lock_rect = {"rect": None}
+selection_session = {"restore_on_cancel": False}
 selection = {"foreground_hwnd": None, "screen_left": 0, "screen_top": 0}
 
 root = tk.Tk()
@@ -128,21 +129,43 @@ def lock_mouse_to_area(x, y, width, height):
     print(f"Mouse locked to x={x}, y={y}, width={width}, height={height}")
 
 
-def unlock_mouse():
+def unlock_mouse(quiet=False):
     mouse_clip["rect"] = None
     if mouse_clip["job"] is not None:
         root.after_cancel(mouse_clip["job"])
         mouse_clip["job"] = None
     release_clip()
-    print("Mouse unlocked.")
+    if not quiet:
+        print("Mouse unlocked.")
+
+
+def restore_saved_lock():
+    if saved_lock_rect["rect"] is None:
+        return
+    x, y, width, height = saved_lock_rect["rect"]
+    lock_mouse_to_area(x, y, width, height)
+
+
+def end_selection_session(restore_original=False):
+    should_restore = restore_original and selection_session["restore_on_cancel"]
+    selection_session["restore_on_cancel"] = False
+    had_overlay = bool(overlay_windows)
+    close_overlay(restore_focus=True)
+    if should_restore and had_overlay and saved_lock_rect["rect"] is not None:
+        root.after(50, restore_saved_lock)
 
 
 def start_area_selection():
     global overlay_windows
 
     if overlay_windows:
-        close_overlay(restore_focus=True)
+        end_selection_session(restore_original=True)
         return
+
+    selection_session["restore_on_cancel"] = saved_lock_rect["rect"] is not None
+
+    if mouse_clip["rect"] is not None:
+        unlock_mouse(quiet=True)
 
     selection["foreground_hwnd"] = user32.GetForegroundWindow()
     left, top, width, height = get_virtual_screen_bounds()
@@ -195,6 +218,8 @@ def start_area_selection():
         w = abs(x2 - x1)
         h = abs(y2 - y1)
         foreground = selection["foreground_hwnd"]
+        should_restore = selection_session["restore_on_cancel"]
+        selection_session["restore_on_cancel"] = False
 
         close_overlay(restore_focus=False)
 
@@ -207,11 +232,19 @@ def start_area_selection():
                     restore_foreground(foreground)
 
             root.after(50, apply_lock)
+        elif should_restore and saved_lock_rect["rect"] is not None:
+
+            def restore():
+                restore_saved_lock()
+                if foreground:
+                    restore_foreground(foreground)
+
+            root.after(50, restore)
         elif foreground:
             root.after(50, lambda: restore_foreground(foreground))
 
     def on_escape(_event=None):
-        close_overlay(restore_focus=True)
+        end_selection_session(restore_original=True)
 
     window.bind("<Escape>", on_escape)
     canvas.bind("<ButtonPress-1>", on_press)
@@ -241,7 +274,7 @@ def toggle_lock():
 
 def cancel_selection():
     if overlay_windows:
-        root.after(0, lambda: close_overlay(restore_focus=True))
+        root.after(0, lambda: end_selection_session(restore_original=True))
 
 
 keyboard.add_hotkey("alt+c", my_function)
