@@ -36,6 +36,19 @@ class RECT(ctypes.Structure):
     ]
 
 
+class POINT(ctypes.Structure):
+    _fields_ = [("x", ctypes.c_long), ("y", ctypes.c_long)]
+
+
+class MONITORINFO(ctypes.Structure):
+    _fields_ = [
+        ("cbSize", ctypes.c_ulong),
+        ("rcMonitor", RECT),
+        ("rcWork", RECT),
+        ("dwFlags", ctypes.c_ulong),
+    ]
+
+
 user32.ClipCursor.argtypes = [ctypes.POINTER(RECT)]
 user32.ClipCursor.restype = ctypes.c_bool
 
@@ -46,6 +59,16 @@ def get_virtual_screen_bounds():
     width = user32.GetSystemMetrics(78)
     height = user32.GetSystemMetrics(79)
     return left, top, width, height
+
+
+def get_monitor_bounds_at(x, y):
+    point = POINT(x, y)
+    monitor = user32.MonitorFromPoint(point, 2)
+    info = MONITORINFO()
+    info.cbSize = ctypes.sizeof(MONITORINFO)
+    user32.GetMonitorInfoW(monitor, ctypes.byref(info))
+    rect = info.rcMonitor
+    return rect.left, rect.top, rect.right - rect.left, rect.bottom - rect.top
 
 
 def set_overlay_style(hwnd):
@@ -218,30 +241,21 @@ def start_area_selection():
         w = abs(x2 - x1)
         h = abs(y2 - y1)
         foreground = selection["foreground_hwnd"]
-        should_restore = selection_session["restore_on_cancel"]
         selection_session["restore_on_cancel"] = False
 
         close_overlay(restore_focus=False)
 
-        if w > 0 and h > 0:
-            print(f"x={x}, y={y}, width={w}, height={h}")
+        if w == 0 and h == 0:
+            x, y, w, h = get_monitor_bounds_at(x1, y1)
 
-            def apply_lock():
-                lock_mouse_to_area(x, y, w, h)
-                if foreground:
-                    restore_foreground(foreground)
+        print(f"x={x}, y={y}, width={w}, height={h}")
 
-            root.after(50, apply_lock)
-        elif should_restore and saved_lock_rect["rect"] is not None:
+        def apply_lock():
+            lock_mouse_to_area(x, y, w, h)
+            if foreground:
+                restore_foreground(foreground)
 
-            def restore():
-                restore_saved_lock()
-                if foreground:
-                    restore_foreground(foreground)
-
-            root.after(50, restore)
-        elif foreground:
-            root.after(50, lambda: restore_foreground(foreground))
+        root.after(50, apply_lock)
 
     def on_escape(_event=None):
         end_selection_session(restore_original=True)
