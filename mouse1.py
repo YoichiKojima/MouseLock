@@ -465,8 +465,10 @@ def start_area_selection():
             canvas.delete(state["rect"])
         cx1, cy1 = to_canvas_coords(state["start_x"], state["start_y"])
         cx2, cy2 = to_canvas_coords(x, y)
+        dash = (3, 2)
+
         state["rect"] = canvas.create_rectangle(
-            cx1, cy1, cx2, cy2, outline="red", width=2
+            cx1, cy1, cx2, cy2, outline="white", width=1, dash=dash
         )
         canvas.update_idletasks()
 
