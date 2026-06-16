@@ -4,6 +4,7 @@ from mouselock.mouse_clip import apply_clip, unlock_mouse
 from mouselock.mouse_hook import stop_mouse_pump, uninstall_mouse_hook
 from mouselock.selection import close_overlay, end_selection_session, start_area_selection
 from mouselock.state import hook_active, hook_dragging, mouse_clip, root, session_state
+from mouselock.tray import remove_tray, setup_tray
 from mouselock.win32 import user32
 
 
@@ -59,10 +60,24 @@ def cancel_selection():
         root.after(0, lambda: end_selection_session(restore_original=True))
 
 
+def shutdown():
+    hook_active.value = 0
+    hook_dragging.value = 0
+    stop_mouse_pump()
+    close_overlay(restore_focus=False)
+    uninstall_mouse_hook()
+    unlock_mouse()
+    remove_tray()
+    root.quit()
+
+
 def main():
     keyboard.add_hotkey("alt+c", start_area_selection_async)
     keyboard.add_hotkey("alt+x", toggle_lock)
     keyboard.add_hotkey("esc", cancel_selection)
+
+    if not setup_tray(start_area_selection_async, toggle_lock, shutdown):
+        print("System tray icon unavailable. Hotkeys still work.")
 
     session_state["locked"] = is_workstation_locked()
     root.after(500, poll_session_state)
@@ -70,12 +85,7 @@ def main():
     try:
         root.mainloop()
     except KeyboardInterrupt:
-        hook_active.value = 0
-        hook_dragging.value = 0
-        stop_mouse_pump()
-        close_overlay(restore_focus=False)
-        uninstall_mouse_hook()
-        unlock_mouse()
+        shutdown()
         print("Stopped.")
 
 
