@@ -82,7 +82,7 @@ def start_area_selection():
     cancel_overlay_fade()
     destroy_selection_overlay()
 
-    selection_session["restore_on_cancel"] = saved_lock_rect["rect"] is not None
+    selection_session["restore_on_cancel"] = mouse_clip["rect"] is not None
 
     if mouse_clip["rect"] is not None:
         unlock_mouse(quiet=True)

@@ -10,11 +10,14 @@ if __name__ == "__main__":
 
 import keyboard
 
+from mouselock.hotkey_manager import apply_hotkeys
 from mouselock.mouse_clip import apply_clip, unlock_mouse
 from mouselock.mouse_hook import stop_mouse_pump, uninstall_mouse_hook
 from mouselock.selection import close_overlay, end_selection_session, start_area_selection
+from mouselock.settings_dialog import show_settings_dialog
+from mouselock.settings_store import format_hotkey_label, load
 from mouselock.state import hook_active, hook_dragging, mouse_clip, root, session_state
-from mouselock.tray import remove_tray, setup_tray
+from mouselock.tray import refresh_menu, remove_tray, setup_tray
 from mouselock.win32 import user32
 
 
@@ -50,14 +53,16 @@ def toggle_lock():
 
     if selection["active"]:
         return
+    toggle_hotkey = format_hotkey_label(load()["toggle_hotkey"])
     if mouse_clip["rect"] is not None:
         unlock_mouse()
-        print("Mouse unlocked. Press Alt+X again to lock to the original area.")
+        print(f"Mouse unlocked. Press {toggle_hotkey} again to lock to the original area.")
     elif saved_lock_rect["rect"] is not None:
         x, y, width, height = saved_lock_rect["rect"]
         lock_mouse_to_area(x, y, width, height)
     else:
-        print("No lock area. Press Alt+C to select an area first.")
+        select_hotkey = format_hotkey_label(load()["select_hotkey"])
+        print(f"No lock area. Press {select_hotkey} to select an area first.")
 
 
 def toggle_lock_async():
@@ -75,6 +80,22 @@ def cancel_selection_async():
     root.after(0, cancel_selection)
 
 
+def register_hotkeys():
+    apply_hotkeys(
+        start_area_selection_async,
+        toggle_lock_async,
+        cancel_selection_async,
+    )
+
+
+def open_settings():
+    def on_saved():
+        register_hotkeys()
+        refresh_menu()
+
+    show_settings_dialog(on_saved)
+
+
 def shutdown():
     keyboard.unhook_all()
     hook_active.value = 0
@@ -88,11 +109,14 @@ def shutdown():
 
 
 def main():
-    keyboard.add_hotkey("alt+c", start_area_selection_async)
-    keyboard.add_hotkey("alt+x", toggle_lock_async)
-    keyboard.add_hotkey("esc", cancel_selection_async)
+    register_hotkeys()
 
-    if not setup_tray(start_area_selection_async, toggle_lock_async, shutdown):
+    if not setup_tray(
+        start_area_selection_async,
+        toggle_lock_async,
+        open_settings,
+        shutdown,
+    ):
         print("System tray icon unavailable. Hotkeys still work.")
 
     session_state["locked"] = is_workstation_locked()
