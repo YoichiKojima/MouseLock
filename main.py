@@ -10,7 +10,7 @@ if __name__ == "__main__":
 
 import keyboard
 
-from mouselock.hotkey_manager import apply_hotkeys
+from mouselock.hotkey_manager import apply_hotkeys, ensure_hotkeys
 from mouselock.mouse_clip import apply_clip, unlock_mouse
 from mouselock.mouse_hook import stop_mouse_pump, uninstall_mouse_hook
 from mouselock.selection import close_overlay, end_selection_session, start_area_selection
@@ -41,6 +41,11 @@ def poll_session_state():
         on_session_unlock()
     session_state["locked"] = locked
     root.after(500, poll_session_state)
+
+
+def poll_hotkeys():
+    ensure_hotkeys()
+    root.after(1000, poll_hotkeys)
 
 
 def start_area_selection_async():
@@ -121,6 +126,7 @@ def main():
 
     session_state["locked"] = is_workstation_locked()
     root.after(500, poll_session_state)
+    root.after(1000, poll_hotkeys)
 
     try:
         root.mainloop()
