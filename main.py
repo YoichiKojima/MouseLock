@@ -1,4 +1,12 @@
 import os
+import sys
+
+if __name__ == "__main__":
+    from mouselock.single_instance import acquire_instance
+
+    if not acquire_instance():
+        print("Mouse Lock is already running.")
+        sys.exit(0)
 
 import keyboard
 
