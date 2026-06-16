@@ -20,6 +20,9 @@ WS_EX_NOACTIVATE = 0x08000000
 WS_EX_TOOLWINDOW = 0x00000080
 WS_EX_LAYERED = 0x00080000
 HWND_TOPMOST = -1
+HWND_NOTOPMOST = -2
+SWP_NOMOVE = 0x0002
+SWP_NOSIZE = 0x0001
 SWP_NOACTIVATE = 0x0010
 SWP_SHOWWINDOW = 0x0040
 ULW_ALPHA = 0x00000002
@@ -408,6 +411,9 @@ def pump_mouse_events():
         x, y = get_cursor_pos()
         selection["on_drag"](x, y)
 
+    user32.SetCursor(cross_cursor)
+    raise_overlay_windows()
+
     selection["poll_job"] = root.after(8, pump_mouse_events)
 
 
@@ -568,6 +574,24 @@ def place_overlay_window(hwnd, left, top, width, height):
     )
 
 
+def raise_overlay_windows():
+    for overlay in selection.get("overlay_monitors") or []:
+        hwnd = overlay["hwnd"]
+        if not hwnd or not user32.IsWindow(hwnd):
+            continue
+        left = overlay["left"]
+        top = overlay["top"]
+        width = overlay["width"]
+        height = overlay["height"]
+        flags = SWP_NOACTIVATE | SWP_SHOWWINDOW
+        user32.SetWindowPos(
+            hwnd, HWND_NOTOPMOST, int(left), int(top), int(width), int(height), flags
+        )
+        user32.SetWindowPos(
+            hwnd, HWND_TOPMOST, int(left), int(top), int(width), int(height), flags
+        )
+
+
 def update_one_layered_overlay(overlay, cutout=None, fade_alpha=None):
     hwnd = overlay["hwnd"]
     width = overlay["width"]
@@ -640,6 +664,8 @@ def update_layered_overlay(cutout=None, fade_alpha=None):
     for overlay in selection.get("overlay_monitors") or []:
         local_cutout = monitor_cutout(overlay, effective_cutout)
         update_one_layered_overlay(overlay, local_cutout, fade_alpha)
+
+    raise_overlay_windows()
 
 
 def cancel_overlay_fade():
@@ -977,7 +1003,7 @@ def start_area_selection():
     mouse_events.clear()
     create_selection_overlay(left, top, width, height)
     start_mouse_pump()
-    restore_foreground(selection["foreground_hwnd"])
+    raise_overlay_windows()
     print("Click and drag to select an area. Press Esc to cancel.")
 
 
