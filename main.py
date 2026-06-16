@@ -16,6 +16,7 @@ from mouselock.mouse_hook import stop_mouse_pump, uninstall_mouse_hook
 from mouselock.selection import close_overlay, end_selection_session, start_area_selection
 from mouselock.settings_dialog import show_settings_dialog
 from mouselock.settings_store import format_hotkey_label, load
+from mouselock.windows_startup import ensure_registered
 from mouselock.state import hook_active, hook_dragging, mouse_clip, root, session_state
 from mouselock.tray import refresh_menu, remove_tray, setup_tray
 from mouselock.win32 import user32
@@ -114,6 +115,13 @@ def shutdown():
 
 
 def main():
+    settings = load()
+    if settings["start_with_windows"]:
+        try:
+            ensure_registered()
+        except OSError:
+            pass
+
     register_hotkeys()
 
     if not setup_tray(

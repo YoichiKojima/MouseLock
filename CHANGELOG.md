@@ -1,5 +1,16 @@
 # Change Logs
 
+## v0.0.1
+
+### Windows startup.
+
+- Optional "Start with Windows" setting in Settings; saving adds or removes a Windows Run registry entry.
+- Re-applies the Run entry on launch when enabled, keeping the path correct after updates or reinstalls.
+
+### Settings.
+
+- Settings dialog renamed from "Hotkey Settings" to "Settings".
+
 ## v0.0.0
 
 ### Initial release.

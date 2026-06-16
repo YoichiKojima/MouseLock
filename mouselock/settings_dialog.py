@@ -9,6 +9,7 @@ import keyboard
 from mouselock.hotkey_manager import validate_hotkey
 from mouselock.settings_store import load, save
 from mouselock.state import root
+from mouselock.windows_startup import set_enabled as set_windows_startup
 from mouselock.win32 import user32
 
 _dialog = None
@@ -105,7 +106,7 @@ def show_settings_dialog(on_saved):
 
     dialog = tk.Toplevel(root)
     _dialog = dialog
-    dialog.title("Hotkey Settings")
+    dialog.title("Settings")
     dialog.resizable(False, False)
     _set_dialog_icon(dialog)
 
@@ -114,6 +115,7 @@ def show_settings_dialog(on_saved):
 
     select_var = tk.StringVar(value=settings["select_hotkey"])
     toggle_var = tk.StringVar(value=settings["toggle_hotkey"])
+    startup_var = tk.BooleanVar(value=settings["start_with_windows"])
     status = ttk.Label(frame, text="")
 
     def make_row(row, label_text, var):
@@ -133,10 +135,16 @@ def show_settings_dialog(on_saved):
         make_row(1, "Toggle lock", toggle_var),
     ]
 
-    status.grid(row=2, column=0, columnspan=3, sticky="w", pady=(4, 12))
+    ttk.Checkbutton(
+        frame,
+        text="Start with Windows",
+        variable=startup_var,
+    ).grid(row=2, column=0, columnspan=3, sticky="w", pady=(0, 8))
+
+    status.grid(row=3, column=0, columnspan=3, sticky="w", pady=(4, 12))
 
     button_row = ttk.Frame(frame)
-    button_row.grid(row=3, column=0, columnspan=3, sticky="e")
+    button_row.grid(row=4, column=0, columnspan=3, sticky="e")
 
     def close_dialog():
         global _dialog
@@ -168,7 +176,16 @@ def show_settings_dialog(on_saved):
                 messagebox.showerror("Invalid hotkey", f"{label}: {message}", parent=dialog)
                 return
 
-        save(select_hotkey, toggle_hotkey)
+        save(select_hotkey, toggle_hotkey, startup_var.get())
+        try:
+            set_windows_startup(startup_var.get())
+        except OSError as exc:
+            messagebox.showerror(
+                "Startup setting failed",
+                f"Could not update Windows startup:\n{exc}",
+                parent=dialog,
+            )
+            return
         close_dialog()
         on_saved()
 
