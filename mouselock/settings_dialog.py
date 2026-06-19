@@ -7,12 +7,20 @@ from tkinter import messagebox, ttk
 import keyboard
 
 from mouselock.hotkey_manager import validate_hotkey
-from mouselock.settings_store import load, save
+from mouselock.settings_store import (
+    DEFAULT_OVERLAY_OPACITY,
+    DEFAULT_SELECT_HOTKEY,
+    DEFAULT_START_WITH_WINDOWS,
+    DEFAULT_TOGGLE_HOTKEY,
+    load,
+    save,
+)
 from mouselock.state import root
 from mouselock.windows_startup import set_enabled as set_windows_startup
 from mouselock.win32 import user32
 
 _dialog = None
+LABEL_WIDTH = 15
 
 
 def resource_path(*parts):
@@ -116,10 +124,13 @@ def show_settings_dialog(on_saved):
     select_var = tk.StringVar(value=settings["select_hotkey"])
     toggle_var = tk.StringVar(value=settings["toggle_hotkey"])
     startup_var = tk.BooleanVar(value=settings["start_with_windows"])
+    opacity_var = tk.IntVar(value=settings["overlay_opacity"])
     status = ttk.Label(frame, text="")
 
     def make_row(row, label_text, var):
-        ttk.Label(frame, text=label_text).grid(row=row, column=0, sticky="w", pady=(0, 8))
+        ttk.Label(frame, text=label_text, width=LABEL_WIDTH).grid(
+            row=row, column=0, sticky="w", pady=(0, 8)
+        )
         entry = ttk.Entry(frame, textvariable=var, width=24, state="readonly")
         entry.grid(row=row, column=1, sticky="ew", padx=(8, 8), pady=(0, 8))
         record_btn = ttk.Button(
@@ -135,16 +146,38 @@ def show_settings_dialog(on_saved):
         make_row(1, "Toggle lock", toggle_var),
     ]
 
+    ttk.Label(frame, text="Overlay opacity", width=LABEL_WIDTH).grid(
+        row=2, column=0, sticky="w", pady=(0, 8)
+    )
+    opacity_value = ttk.Label(frame, width=5, anchor="e")
+
+    def update_opacity_label(value=None):
+        opacity_value.config(text=f"{int(opacity_var.get())}%")
+
+    opacity_slider = ttk.Scale(
+        frame,
+        from_=0,
+        to=100,
+        orient=tk.HORIZONTAL,
+        variable=opacity_var,
+        command=update_opacity_label,
+    )
+    opacity_slider.grid(row=2, column=1, sticky="ew", padx=(8, 8), pady=(0, 8))
+    opacity_value.grid(row=2, column=2, sticky="e", pady=(0, 8))
+    update_opacity_label()
+
     ttk.Checkbutton(
         frame,
         text="Start with Windows",
         variable=startup_var,
-    ).grid(row=2, column=0, columnspan=3, sticky="w", pady=(0, 8))
+    ).grid(row=3, column=0, columnspan=3, sticky="w", pady=(0, 8))
 
-    status.grid(row=3, column=0, columnspan=3, sticky="w", pady=(4, 12))
+    frame.columnconfigure(1, weight=1)
+
+    status.grid(row=4, column=0, columnspan=3, sticky="w", pady=(4, 12))
 
     button_row = ttk.Frame(frame)
-    button_row.grid(row=4, column=0, columnspan=3, sticky="e")
+    button_row.grid(row=5, column=0, columnspan=3, sticky="e")
 
     def close_dialog():
         global _dialog
@@ -176,7 +209,12 @@ def show_settings_dialog(on_saved):
                 messagebox.showerror("Invalid hotkey", f"{label}: {message}", parent=dialog)
                 return
 
-        save(select_hotkey, toggle_hotkey, startup_var.get())
+        save(
+            select_hotkey,
+            toggle_hotkey,
+            opacity_var.get(),
+            startup_var.get(),
+        )
         try:
             set_windows_startup(startup_var.get())
         except OSError as exc:
@@ -189,8 +227,17 @@ def show_settings_dialog(on_saved):
         close_dialog()
         on_saved()
 
+    def on_reset():
+        select_var.set(DEFAULT_SELECT_HOTKEY)
+        toggle_var.set(DEFAULT_TOGGLE_HOTKEY)
+        startup_var.set(DEFAULT_START_WITH_WINDOWS)
+        opacity_var.set(DEFAULT_OVERLAY_OPACITY)
+        update_opacity_label()
+        _set_status(status, "")
+
     ttk.Button(button_row, text="Cancel", command=close_dialog).grid(row=0, column=0, padx=(0, 8))
-    ttk.Button(button_row, text="Save", command=on_save).grid(row=0, column=1)
+    ttk.Button(button_row, text="Reset", command=on_reset).grid(row=0, column=1, padx=(0, 8))
+    ttk.Button(button_row, text="Save", command=on_save).grid(row=0, column=2)
 
     dialog.protocol("WM_DELETE_WINDOW", close_dialog)
     dialog.update_idletasks()

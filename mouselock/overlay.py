@@ -7,7 +7,6 @@ from mouselock.config import (
     BORDER_DASH_OFF,
     BORDER_DASH_ON,
     DIB_RGB_COLORS,
-    DIM_ALPHA,
     ERROR_CLASS_ALREADY_EXISTS,
     FADE_DURATION_MS,
     FADE_INTERVAL_MS,
@@ -26,6 +25,7 @@ from mouselock.config import (
 )
 from mouselock import state
 from mouselock.monitors import enum_monitors
+from mouselock.settings_store import get_overlay_dim_alpha
 from mouselock.state import root, selection
 from mouselock.win32 import (
     BITMAPINFO,
@@ -48,7 +48,7 @@ def dash_visible(pos):
 
 
 def build_overlay_bitmap(width, height, cutout=None, fade_alpha=255):
-    dim_alpha = (DIM_ALPHA * max(0, min(255, int(fade_alpha)))) // 255
+    dim_alpha = (get_overlay_dim_alpha() * max(0, min(255, int(fade_alpha)))) // 255
     pixel = bytes([0, 0, 0, dim_alpha])
     buf = bytearray(pixel * (width * height))
 
