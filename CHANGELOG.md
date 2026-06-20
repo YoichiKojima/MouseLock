@@ -1,5 +1,17 @@
 # Change Logs
 
+## v0.0.2
+
+### Overlay opacity.
+
+- Configurable overlay dimming during area selection (0–100%, default 50%), saved to `settings.json`.
+- Overlay opacity is applied at runtime instead of a fixed constant.
+
+### Settings.
+
+- Added an overlay opacity slider with a live percentage label in the Settings dialog.
+- Added a **Reset** button to restore default hotkeys, startup, and overlay opacity.
+
 ## v0.0.1
 
 ### Windows startup.
